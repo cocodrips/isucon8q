@@ -9,6 +9,7 @@ import (
 	"html/template"
 	"io"
 	"log"
+	"math/rand"
 	"os"
 	"os/exec"
 	"sort"
@@ -82,6 +83,29 @@ type Administrator struct {
 	Nickname  string `json:"nickname,omitempty"`
 	LoginName string `json:"login_name,omitempty"`
 	PassHash  string `json:"pass_hash,omitempty"`
+}
+
+type SheetN struct {
+	id int64
+	num int64
+}
+
+func random(min, max int) int {
+	rand.Seed(time.Now().Unix())
+	return rand.Intn(max - min) + min
+}
+
+func removeSheet(sheets []SheetN, index int) ([]SheetN, SheetN) {
+	var result []SheetN
+	var removed SheetN
+	for i, v := range sheets {
+		if i != index {
+			result = append(result, v)
+		} else {
+			removed = v
+		}
+	}
+	return result, removed
 }
 
 func sessUserID(c echo.Context) int64 {
@@ -621,6 +645,7 @@ func main() {
 
 		//var sheet Sheet
 		var reservationID int64
+		var sheets []SheetN
 
 		rows, err := db.Query("select sheets.id as id, sheets.num as num from sheets WHERE id NOT IN (select sheet_id from reservations where event_id = ? and canceled_at is null) and `rank` = ?", event.ID, params.Rank)
 		if err == sql.ErrNoRows {
@@ -635,13 +660,19 @@ func main() {
 			if err != nil {
 				return resError(c, "sold_out", 409)
 			}
+			sheets = append(sheets, SheetN{id: sheetId, num: sheetNum})
+		}
 
+		for _, _ = range sheets {
+			randomIndex := random(0, len(sheets) - 1)
+			remainSheets, removed := removeSheet(sheets, randomIndex)
+			sheets = remainSheets
 			tx, err := db.Begin()
 			if err != nil {
 				return err
 			}
 
-			res, err := tx.Exec("INSERT INTO reservations (event_id, sheet_id, user_id, reserved_at) VALUES (?, ?, ?, ?)", event.ID, sheetId, user.ID, time.Now().UTC().Format("2006-01-02 15:04:05.000000"))
+			res, err := tx.Exec("INSERT INTO reservations (event_id, sheet_id, user_id, reserved_at) VALUES (?, ?, ?, ?)", event.ID, removed.id, user.ID, time.Now().UTC().Format("2006-01-02 15:04:05.000000"))
 			if err != nil {
 				tx.Rollback()
 				log.Println("re-try: rollback by", err)
@@ -659,7 +690,7 @@ func main() {
 				continue
 			}
 
-			reservedSheetNum = sheetNum
+			reservedSheetNum = removed.num
 			break
 		}
 		return c.JSON(202, echo.Map{
