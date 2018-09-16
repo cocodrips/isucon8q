@@ -95,11 +95,11 @@ func random(min, max int64) int64 {
 	return rand.Int63n(max - min) + min
 }
 
-func removeSheet(sheets []SheetN, index int) ([]SheetN, SheetN) {
+func removeSheet(sheets []SheetN, index int64) ([]SheetN, SheetN) {
 	var result []SheetN
 	var removed SheetN
 	for i, v := range sheets {
-		if i != index {
+		if int64(i) != index {
 			result = append(result, v)
 		} else {
 			removed = v
@@ -664,7 +664,7 @@ func main() {
 		}
 
 		for _, _ = range sheets {
-			randomIndex := random(0, len(sheets) - 1)
+			randomIndex := random(0, int64(len(sheets))  - 1)
 			remainSheets, removed := removeSheet(sheets, randomIndex)
 			sheets = remainSheets
 			tx, err := db.Begin()
