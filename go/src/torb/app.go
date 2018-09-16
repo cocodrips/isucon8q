@@ -24,6 +24,14 @@ import (
 	"github.com/labstack/echo/middleware"
 )
 
+const (
+	S_START   = 1
+	A_START   = 51
+	B_START   = 201
+	C_START   = 501
+	SHEET_END = 1001
+)
+
 type User struct {
 	ID        int64  `json:"id,omitempty"`
 	Nickname  string `json:"nickname,omitempty"`
@@ -217,13 +225,14 @@ func getEvents(all bool) ([]*Event, error) {
 	}
 	defer tx.Commit()
 
-	// TODO 全部とる必要あるか確認
+	// Explain OK
 	rows, err := tx.Query("SELECT * FROM events ORDER BY id ASC")
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
+	// イベント一覧取得
 	var events []*Event
 	for rows.Next() {
 		var event Event
@@ -235,6 +244,8 @@ func getEvents(all bool) ([]*Event, error) {
 		}
 		events = append(events, &event)
 	}
+
+	// イベント情報をsheetから入れる
 	for i, v := range events {
 		event, err := getEvent(v.ID, -1)
 		if err != nil {
@@ -248,51 +259,143 @@ func getEvents(all bool) ([]*Event, error) {
 	return events, nil
 }
 
+func getSheetRank(sheet_id int64) string {
+	sheet_rank := "S"
+	if A_START <= sheet_id && sheet_id < B_START {
+		sheet_rank = "A"
+	}
+	if B_START <= sheet_id && sheet_id < C_START {
+		sheet_rank = "B"
+	}
+	if C_START <= sheet_id && sheet_id < SHEET_END {
+		sheet_rank = "C"
+	}
+	return sheet_rank
+}
+
+func sheetIdToNum(sheet_id int64) int64 {
+	if A_START <= sheet_id && sheet_id < B_START {
+		sheet_id -= A_START - 1
+	}
+	if B_START <= sheet_id && sheet_id < C_START {
+		sheet_id -= B_START - 1
+	}
+	if C_START <= sheet_id && sheet_id < SHEET_END {
+		sheet_id -= C_START - 1
+	}
+	return sheet_id
+}
+
+func sheetNumToId(sheet_rank string, sheet_num int64) int64 {
+	sheet_id := sheet_num
+	if sheet_rank == "A" {
+		sheet_id += A_START - 1
+	}
+	if sheet_rank == "B" {
+		sheet_id += B_START - 1
+	}
+	if sheet_rank == "C" {
+		sheet_id += C_START - 1
+	}
+	return sheet_id
+}
+
+
 func getEvent(eventID, loginUserID int64) (*Event, error) {
 	var event Event
-	// OK
+
+	// イベント情報取得
 	if err := db.QueryRow("SELECT * FROM events WHERE id = ?", eventID).Scan(&event.ID, &event.Title, &event.PublicFg, &event.ClosedFg, &event.Price); err != nil {
 		return nil, err
 	}
 	event.Sheets = map[string]*Sheets{
-		"S": &Sheets{},
-		"A": &Sheets{},
-		"B": &Sheets{},
-		"C": &Sheets{},
+		"S": &Sheets{Detail: make([]*Sheet, 50), Total: 50},
+		"A": &Sheets{Detail: make([]*Sheet, 150), Total: 150},
+		"B": &Sheets{Detail: make([]*Sheet, 300), Total: 300},
+		"C": &Sheets{Detail: make([]*Sheet, 500), Total: 500},
 	}
-	// OK
-	rows, err := db.Query("SELECT * FROM sheets ORDER BY `rank`, num")
+
+	// シート情報作成
+	// - 自分の予約かどうか
+	// - 各席の予約状況
+	// - 全体と、sheetで何席残っているのか (sheet S~Cを足して全体をとる)
+	// - 席のプライス
+
+	event.Sheets["S"].Price = event.Price + 5000
+	event.Sheets["A"].Price = event.Price + 3000
+	event.Sheets["B"].Price = event.Price + 1000
+	event.Sheets["C"].Price = event.Price
+	event.Total = 1000
+
+	for sheet_rank, sheets := range event.Sheets {
+		sheets.Remains = sheets.Total
+
+		// この初期化いる？
+		for idx, _ := range sheets.Detail {
+			sheet := Sheet{}
+			sheet.Reserved = false
+			sheet.ID = sheetNumToId(sheet_rank, int64(idx + 1))
+			sheet.Num = int64(idx + 1)
+			sheets.Detail[idx] = &sheet;
+		}
+	}
+
+	rows, err := db.Query("SELECT sheet_id, user_id, reserved_at FROM reservations WHERE event_id = ? AND canceled_at IS NULL", eventID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
 	for rows.Next() {
-		var sheet Sheet
-		if err := rows.Scan(&sheet.ID, &sheet.Rank, &sheet.Num, &sheet.Price); err != nil {
-			return nil, err
-		}
-		event.Sheets[sheet.Rank].Price = event.Price + sheet.Price
-		event.Total++
-		event.Sheets[sheet.Rank].Total++
-
 		var reservation Reservation
-		// TODO 改修できるかな
-		err := db.QueryRow("SELECT * FROM reservations WHERE event_id = ? AND sheet_id = ? AND canceled_at IS NULL GROUP BY event_id, sheet_id HAVING reserved_at = MIN(reserved_at)", event.ID, sheet.ID).Scan(&reservation.ID, &reservation.EventID, &reservation.SheetID, &reservation.UserID, &reservation.ReservedAt, &reservation.CanceledAt)
+		err = rows.Scan(&reservation.SheetID, &reservation.UserID, &reservation.ReservedAt)
 		if err == nil {
-			sheet.Mine = reservation.UserID == loginUserID
+			sheet_rank := getSheetRank(reservation.SheetID)
+			sheet_num := sheetIdToNum(reservation.SheetID)
+			sheets := event.Sheets[sheet_rank]
+			sheets.Remains--;
+			// sheet情報入れる
+			//fmt.Println(sheet_rank, reservation.SheetID, sheet_num)
+			sheet := sheets.Detail[sheet_num - 1]
 			sheet.Reserved = true
+			sheet.ID = reservation.SheetID
+			sheet.Num = sheetIdToNum(reservation.SheetID)
+			sheet.Mine = reservation.UserID == loginUserID
 			sheet.ReservedAtUnix = reservation.ReservedAt.Unix()
-		} else if err == sql.ErrNoRows {
-			event.Remains++
-			event.Sheets[sheet.Rank].Remains++
 		} else {
 			return nil, err
 		}
-
-		event.Sheets[sheet.Rank].Detail = append(event.Sheets[sheet.Rank].Detail, &sheet)
 	}
+	rows.Close()
 
+	event.Remains = event.Sheets["S"].Remains + event.Sheets["A"].Remains + event.Sheets["B"].Remains + event.Sheets["C"].Remains
+	//for rows.Next() {
+	//	var sheet Sheet
+	//	if err := rows.Scan(&sheet.ID, &sheet.Rank, &sheet.Num, &sheet.Price); err != nil {
+	//		return nil, err
+	//	}
+	//	//event.Sheets[sheet.Rank].Price = event.Price + sheet.Price
+	//	//event.Total++
+	//	event.Sheets[sheet.Rank].Total++
+	//
+	//	var reservation Reservation
+	//	// TODO 改修できるかな
+	//	err := db.QueryRow("SELECT * FROM reservations WHERE event_id = ? AND sheet_id = ? AND canceled_at IS NULL GROUP BY event_id, sheet_id HAVING reserved_at = MIN(reserved_at)", event.ID, sheet.ID).Scan(&reservation.ID, &reservation.EventID, &reservation.SheetID, &reservation.UserID, &reservation.ReservedAt, &reservation.CanceledAt)
+	//
+	//	if err == nil {
+	//		// 自分の予約かどうか
+	//		//sheet.Mine = reservation.UserID == loginUserID
+	//		//sheet.Reserved = true
+	//		//sheet.ReservedAtUnix = reservation.ReservedAt.Unix()
+	//	} else if err == sql.ErrNoRows {
+	//		// 席が残ってるってカウント
+	//		//event.Remains++
+	//		event.Sheets[sheet.Rank].Remains++
+	//	} else {
+	//		return nil, err
+	//	}
+	//
+	//	event.Sheets[sheet.Rank].Detail = append(event.Sheets[sheet.Rank].Detail, &sheet)
+	//}
 	return &event, nil
 }
 
