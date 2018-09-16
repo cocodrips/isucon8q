@@ -9,7 +9,6 @@ import (
 	"html/template"
 	"io"
 	"log"
-	"math/rand"
 	"os"
 	"os/exec"
 	"sort"
@@ -93,18 +92,18 @@ type Administrator struct {
 	PassHash  string `json:"pass_hash,omitempty"`
 }
 
-type SheetN struct {
-	id int64
-	num int64
-}
+//type SheetN struct {
+//	id int64
+//	num int64
+//}
 
-func shuffle(data []SheetN) {
-	n := len(data)
-	for i := n - 1; i >= 0; i-- {
-		j := rand.Intn(i + 1)
-		data[i], data[j] = data[j], data[i]
-	}
-}
+//func shuffle(data []SheetN) {
+//	n := len(data)
+//	for i := n - 1; i >= 0; i-- {
+//		j := rand.Intn(i + 1)
+//		data[i], data[j] = data[j], data[i]
+//	}
+//}
 
 func sessUserID(c echo.Context) int64 {
 	sess, _ := session.Get("session", c)
@@ -716,12 +715,10 @@ func main() {
 			Rank string `json:"sheet_rank"`
 		}
 		c.Bind(&params)
-
 		user, err := getLoginUser(c)
 		if err != nil {
 			return err
 		}
-
 		event, err := getEvent(eventID, user.ID)
 		if err != nil {
 			if err == sql.ErrNoRows {
@@ -731,39 +728,23 @@ func main() {
 		} else if !event.PublicFg {
 			return resError(c, "invalid_event", 404)
 		}
-
 		if !validateRank(params.Rank) {
 			return resError(c, "invalid_rank", 400)
 		}
-
-		//var sheet Sheet
+		var sheet Sheet
 		var reservationID int64
-		var sheets []SheetN
-
-		rows, err := db.Query("select sheets.id as id, sheets.num as num from sheets WHERE id NOT IN (select sheet_id from reservations where event_id = ? and canceled_at is null) and `rank` = ?", event.ID, params.Rank)
-		if err == sql.ErrNoRows {
-			return resError(c, "sold_out", 409)
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var sheetId int64
-			var sheetNum int64
-			err = rows.Scan(&sheetId, &sheetNum)
-			if err != nil {
-				return resError(c, "sold_out", 409)
+		for {
+			if err := db.QueryRow("SELECT * FROM sheets WHERE id NOT IN (SELECT sheet_id FROM reservations WHERE event_id = ? AND canceled_at IS NULL FOR UPDATE) AND `rank` = ? ORDER BY RAND() LIMIT 1", event.ID, params.Rank).Scan(&sheet.ID, &sheet.Rank, &sheet.Num, &sheet.Price); err != nil {
+				if err == sql.ErrNoRows {
+					return resError(c, "sold_out", 409)
+				}
+				return err
 			}
-			sheets = append(sheets, SheetN{id: sheetId, num: sheetNum})
-		}
-
-		shuffle(sheets)
-		var reservedSheetNum int64
-		for _, v := range sheets {
 			tx, err := db.Begin()
 			if err != nil {
 				return err
 			}
-
-			res, err := tx.Exec("INSERT INTO reservations (event_id, sheet_id, user_id, reserved_at) VALUES (?, ?, ?, ?)", event.ID, v.id, user.ID, time.Now().UTC().Format("2006-01-02 15:04:05.000000"))
+			res, err := tx.Exec("INSERT INTO reservations (event_id, sheet_id, user_id, reserved_at) VALUES (?, ?, ?, ?)", event.ID, sheet.ID, user.ID, time.Now().UTC().Format("2006-01-02 15:04:05.000000"))
 			if err != nil {
 				tx.Rollback()
 				log.Println("re-try: rollback by", err)
@@ -780,14 +761,12 @@ func main() {
 				log.Println("re-try: rollback by", err)
 				continue
 			}
-
-			reservedSheetNum = v.num
 			break
 		}
 		return c.JSON(202, echo.Map{
 			"id":         reservationID,
 			"sheet_rank": params.Rank,
-			"sheet_num":  reservedSheetNum,
+			"sheet_num":  sheet.Num,
 		})
 	}, loginRequired)
 
