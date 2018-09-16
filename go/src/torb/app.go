@@ -170,6 +170,7 @@ func getLoginUser(c echo.Context) (*User, error) {
 		return nil, errors.New("not logged in")
 	}
 	var user User
+	// OK
 	err := db.QueryRow("SELECT id, nickname FROM users WHERE id = ?", userID).Scan(&user.ID, &user.Nickname)
 	return &user, err
 }
@@ -180,6 +181,7 @@ func getLoginAdministrator(c echo.Context) (*Administrator, error) {
 		return nil, errors.New("not logged in")
 	}
 	var administrator Administrator
+	// OK
 	err := db.QueryRow("SELECT id, nickname FROM administrators WHERE id = ?", administratorID).Scan(&administrator.ID, &administrator.Nickname)
 	return &administrator, err
 }
@@ -191,6 +193,7 @@ func getEvents(all bool) ([]*Event, error) {
 	}
 	defer tx.Commit()
 
+	// TODO 全部とる必要あるか確認
 	rows, err := tx.Query("SELECT * FROM events ORDER BY id ASC")
 	if err != nil {
 		return nil, err
@@ -223,6 +226,7 @@ func getEvents(all bool) ([]*Event, error) {
 
 func getEvent(eventID, loginUserID int64) (*Event, error) {
 	var event Event
+	// OK
 	if err := db.QueryRow("SELECT * FROM events WHERE id = ?", eventID).Scan(&event.ID, &event.Title, &event.PublicFg, &event.ClosedFg, &event.Price); err != nil {
 		return nil, err
 	}
@@ -232,7 +236,7 @@ func getEvent(eventID, loginUserID int64) (*Event, error) {
 		"B": &Sheets{},
 		"C": &Sheets{},
 	}
-
+	// OK
 	rows, err := db.Query("SELECT * FROM sheets ORDER BY `rank`, num")
 	if err != nil {
 		return nil, err
@@ -249,6 +253,7 @@ func getEvent(eventID, loginUserID int64) (*Event, error) {
 		event.Sheets[sheet.Rank].Total++
 
 		var reservation Reservation
+		// TODO 改修できるかな
 		err := db.QueryRow("SELECT * FROM reservations WHERE event_id = ? AND sheet_id = ? AND canceled_at IS NULL GROUP BY event_id, sheet_id HAVING reserved_at = MIN(reserved_at)", event.ID, sheet.ID).Scan(&reservation.ID, &reservation.EventID, &reservation.SheetID, &reservation.UserID, &reservation.ReservedAt, &reservation.CanceledAt)
 		if err == nil {
 			sheet.Mine = reservation.UserID == loginUserID
@@ -295,6 +300,7 @@ func fillinAdministrator(next echo.HandlerFunc) echo.HandlerFunc {
 
 func validateRank(rank string) bool {
 	var count int
+	// これは複合indexで引っ掛けられるからOK?
 	db.QueryRow("SELECT COUNT(*) FROM sheets WHERE `rank` = ?", rank).Scan(&count)
 	return count > 0
 }
@@ -334,7 +340,13 @@ func main() {
 	}
 	e.Use(session.Middleware(sessions.NewCookieStore([]byte("secret"))))
 	e.Use(middleware.LoggerWithConfig(middleware.LoggerConfig{Output: os.Stderr}))
+
+	// TODO: Dummy???? きてない
+	// SCORE: 1 / 100req
 	e.Static("/", "public")
+
+	// トップページ
+	// SCORE: 5 / 1req
 	e.GET("/", func(c echo.Context) error {
 		events, err := getEvents(false)
 		if err != nil {
@@ -349,6 +361,8 @@ func main() {
 			"origin": c.Scheme() + "://" + c.Request().Host,
 		})
 	}, fillinUser)
+
+	// Initialize
 	e.GET("/initialize", func(c echo.Context) error {
 		cmd := exec.Command("../../db/init.sh")
 		cmd.Stdin = os.Stdin
@@ -360,6 +374,9 @@ func main() {
 
 		return c.NoContent(204)
 	})
+
+	// ユーザ追加
+	// 1 / 1req
 	e.POST("/api/users", func(c echo.Context) error {
 		var params struct {
 			Nickname  string `json:"nickname"`
@@ -374,6 +391,7 @@ func main() {
 		}
 
 		var user User
+		// OK
 		if err := tx.QueryRow("SELECT * FROM users WHERE login_name = ?", params.LoginName).Scan(&user.ID, &user.LoginName, &user.Nickname, &user.PassHash); err != sql.ErrNoRows {
 			tx.Rollback()
 			if err == nil {
@@ -381,7 +399,6 @@ func main() {
 			}
 			return err
 		}
-
 		res, err := tx.Exec("INSERT INTO users (login_name, pass_hash, nickname) VALUES (?, SHA2(?, 256), ?)", params.LoginName, params.Password, params.Nickname)
 		if err != nil {
 			tx.Rollback()
@@ -401,6 +418,9 @@ func main() {
 			"nickname": params.Nickname,
 		})
 	})
+
+	// ユーザ情報
+	// SCORE: 1 / 1req
 	e.GET("/api/users/:id", func(c echo.Context) error {
 		var user User
 		if err := db.QueryRow("SELECT id, nickname FROM users WHERE id = ?", c.Param("id")).Scan(&user.ID, &user.Nickname); err != nil {
@@ -415,6 +435,7 @@ func main() {
 			return resError(c, "forbidden", 403)
 		}
 
+		// TODO これ改修できるかな
 		rows, err := db.Query("SELECT r.*, s.rank AS sheet_rank, s.num AS sheet_num FROM reservations r INNER JOIN sheets s ON s.id = r.sheet_id WHERE r.user_id = ? ORDER BY IFNULL(r.canceled_at, r.reserved_at) DESC LIMIT 5", user.ID)
 		if err != nil {
 			return err
@@ -453,10 +474,11 @@ func main() {
 		}
 
 		var totalPrice int
+		// TODO これも改修
 		if err := db.QueryRow("SELECT IFNULL(SUM(e.price + s.price), 0) FROM reservations r INNER JOIN sheets s ON s.id = r.sheet_id INNER JOIN events e ON e.id = r.event_id WHERE r.user_id = ? AND r.canceled_at IS NULL", user.ID).Scan(&totalPrice); err != nil {
 			return err
 		}
-
+		// TODO これも改修
 		rows, err = db.Query("SELECT event_id FROM reservations WHERE user_id = ? GROUP BY event_id ORDER BY MAX(IFNULL(canceled_at, reserved_at)) DESC LIMIT 5", user.ID)
 		if err != nil {
 			return err
@@ -490,6 +512,8 @@ func main() {
 			"recent_events":       recentEvents,
 		})
 	}, loginRequired)
+
+	// SCORE: 1 / 1req
 	e.POST("/api/actions/login", func(c echo.Context) error {
 		var params struct {
 			LoginName string `json:"login_name"`
@@ -498,6 +522,7 @@ func main() {
 		c.Bind(&params)
 
 		user := new(User)
+		// OK
 		if err := db.QueryRow("SELECT * FROM users WHERE login_name = ?", params.LoginName).Scan(&user.ID, &user.LoginName, &user.Nickname, &user.PassHash); err != nil {
 			if err == sql.ErrNoRows {
 				return resError(c, "authentication_failed", 401)
@@ -506,6 +531,7 @@ func main() {
 		}
 
 		var passHash string
+		// TODO SQLでhashするのあかん。GO側でhashする。
 		if err := db.QueryRow("SELECT SHA2(?, 256)", params.Password).Scan(&passHash); err != nil {
 			return err
 		}
@@ -520,10 +546,14 @@ func main() {
 		}
 		return c.JSON(200, user)
 	})
+
+	// SCORE: 1 / 1req
 	e.POST("/api/actions/logout", func(c echo.Context) error {
 		sessDeleteUserID(c)
 		return c.NoContent(204)
 	}, loginRequired)
+
+	// SCORE: 1 / 1req ??????
 	e.GET("/api/events", func(c echo.Context) error {
 		events, err := getEvents(true)
 		if err != nil {
@@ -534,6 +564,8 @@ func main() {
 		}
 		return c.JSON(200, events)
 	})
+
+	// SCORE: 5 / 1req
 	e.GET("/api/events/:id", func(c echo.Context) error {
 		eventID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 		if err != nil {
@@ -556,6 +588,8 @@ func main() {
 		}
 		return c.JSON(200, sanitizeEvent(event))
 	})
+
+	// SCORE: 10 / 1req
 	e.POST("/api/events/:id/actions/reserve", func(c echo.Context) error {
 		eventID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 		if err != nil {
@@ -588,6 +622,7 @@ func main() {
 		var sheet Sheet
 		var reservationID int64
 		for {
+			// TODO これはやばい... order by rand()はやばい。randomで取る必要ない。
 			if err := db.QueryRow("SELECT * FROM sheets WHERE id NOT IN (SELECT sheet_id FROM reservations WHERE event_id = ? AND canceled_at IS NULL FOR UPDATE) AND `rank` = ? ORDER BY RAND() LIMIT 1", event.ID, params.Rank).Scan(&sheet.ID, &sheet.Rank, &sheet.Num, &sheet.Price); err != nil {
 				if err == sql.ErrNoRows {
 					return resError(c, "sold_out", 409)
@@ -626,6 +661,8 @@ func main() {
 			"sheet_num":  sheet.Num,
 		})
 	}, loginRequired)
+
+	// SOCRE: 10 / 1req
 	e.DELETE("/api/events/:id/sheets/:rank/:num/reservation", func(c echo.Context) error {
 		eventID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 		if err != nil {
@@ -665,8 +702,9 @@ func main() {
 		if err != nil {
 			return err
 		}
-
 		var reservation Reservation
+		// TODO 行lockしている。 このトランザクションのためにlockしている。
+		// 複合indexは入っている。
 		if err := tx.QueryRow("SELECT * FROM reservations WHERE event_id = ? AND sheet_id = ? AND canceled_at IS NULL GROUP BY event_id HAVING reserved_at = MIN(reserved_at) FOR UPDATE", event.ID, sheet.ID).Scan(&reservation.ID, &reservation.EventID, &reservation.SheetID, &reservation.UserID, &reservation.ReservedAt, &reservation.CanceledAt); err != nil {
 			tx.Rollback()
 			if err == sql.ErrNoRows {
@@ -690,6 +728,8 @@ func main() {
 
 		return c.NoContent(204)
 	}, loginRequired)
+
+	// SCORE: 1 / 1req
 	e.GET("/admin/", func(c echo.Context) error {
 		var events []*Event
 		administrator := c.Get("administrator")
@@ -705,6 +745,8 @@ func main() {
 			"origin":        c.Scheme() + "://" + c.Request().Host,
 		})
 	}, fillinAdministrator)
+
+	// SCORE: 1 / 1req
 	e.POST("/admin/api/actions/login", func(c echo.Context) error {
 		var params struct {
 			LoginName string `json:"login_name"`
@@ -721,6 +763,7 @@ func main() {
 		}
 
 		var passHash string
+		// TODO passwordのhash化を直す
 		if err := db.QueryRow("SELECT SHA2(?, 256)", params.Password).Scan(&passHash); err != nil {
 			return err
 		}
@@ -882,6 +925,7 @@ func main() {
 		return renderReportCSV(c, reports)
 	}, adminLoginRequired)
 	e.GET("/admin/api/reports/sales", func(c echo.Context) error {
+		// OK
 		rows, err := db.Query("select r.*, s.rank as sheet_rank, s.num as sheet_num, s.price as sheet_price, e.id as event_id, e.price as event_price from reservations r inner join sheets s on s.id = r.sheet_id inner join events e on e.id = r.event_id order by reserved_at asc for update")
 		if err != nil {
 			return err
@@ -913,7 +957,7 @@ func main() {
 		return renderReportCSV(c, reports)
 	}, adminLoginRequired)
 
-	e.Start(":8080")
+	e.Start(":8089")
 }
 
 type Report struct {
@@ -927,6 +971,7 @@ type Report struct {
 	Price         int64
 }
 
+// TODO これ重そう
 func renderReportCSV(c echo.Context, reports []Report) error {
 	sort.Slice(reports, func(i, j int) bool { return strings.Compare(reports[i].SoldAt, reports[j].SoldAt) < 0 })
 
