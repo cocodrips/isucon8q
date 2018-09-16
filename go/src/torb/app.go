@@ -311,6 +311,7 @@ func getEvent(eventID, loginUserID int64) (*Event, error) {
 			sheet := Sheet{}
 			sheet.Reserved = false
 			sheet.ID = sheetNumToId(sheet_rank, int64(idx + 1))
+			sheet.Num = int64(idx + 1)
 			sheets.Detail[idx] = &sheet;
 		}
 	}
