@@ -664,7 +664,7 @@ func main() {
 		}
 
 		for _, _ = range sheets {
-			randomIndex := random(0, int64(len(sheets))  - 1)
+			randomIndex := random(int64(0), int64(len(sheets)  - 1))
 			remainSheets, removed := removeSheet(sheets, randomIndex)
 			sheets = remainSheets
 			tx, err := db.Begin()
