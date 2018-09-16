@@ -340,7 +340,13 @@ func main() {
 	}
 	e.Use(session.Middleware(sessions.NewCookieStore([]byte("secret"))))
 	e.Use(middleware.LoggerWithConfig(middleware.LoggerConfig{Output: os.Stderr}))
+
+	// TODO: Dummy???? きてない
+	// SCORE: 1 / 100req
 	e.Static("/", "public")
+
+	// トップページ
+	// SCORE: 5 / 1req
 	e.GET("/", func(c echo.Context) error {
 		events, err := getEvents(false)
 		if err != nil {
@@ -355,6 +361,8 @@ func main() {
 			"origin": c.Scheme() + "://" + c.Request().Host,
 		})
 	}, fillinUser)
+
+	// Initialize
 	e.GET("/initialize", func(c echo.Context) error {
 		cmd := exec.Command("../../db/init.sh")
 		cmd.Stdin = os.Stdin
@@ -366,6 +374,9 @@ func main() {
 
 		return c.NoContent(204)
 	})
+
+	// ユーザ追加
+	// 1 / 1req
 	e.POST("/api/users", func(c echo.Context) error {
 		var params struct {
 			Nickname  string `json:"nickname"`
@@ -407,6 +418,9 @@ func main() {
 			"nickname": params.Nickname,
 		})
 	})
+
+	// ユーザ情報
+	// SCORE: 1 / 1req
 	e.GET("/api/users/:id", func(c echo.Context) error {
 		var user User
 		if err := db.QueryRow("SELECT id, nickname FROM users WHERE id = ?", c.Param("id")).Scan(&user.ID, &user.Nickname); err != nil {
@@ -498,6 +512,8 @@ func main() {
 			"recent_events":       recentEvents,
 		})
 	}, loginRequired)
+
+	// SCORE: 1 / 1req
 	e.POST("/api/actions/login", func(c echo.Context) error {
 		var params struct {
 			LoginName string `json:"login_name"`
@@ -530,10 +546,14 @@ func main() {
 		}
 		return c.JSON(200, user)
 	})
+
+	// SCORE: 1 / 1req
 	e.POST("/api/actions/logout", func(c echo.Context) error {
 		sessDeleteUserID(c)
 		return c.NoContent(204)
 	}, loginRequired)
+
+	// SCORE: 1 / 1req ??????
 	e.GET("/api/events", func(c echo.Context) error {
 		events, err := getEvents(true)
 		if err != nil {
@@ -544,6 +564,8 @@ func main() {
 		}
 		return c.JSON(200, events)
 	})
+
+	// SCORE: 5 / 1req
 	e.GET("/api/events/:id", func(c echo.Context) error {
 		eventID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 		if err != nil {
@@ -566,6 +588,8 @@ func main() {
 		}
 		return c.JSON(200, sanitizeEvent(event))
 	})
+
+	// SCORE: 10 / 1req
 	e.POST("/api/events/:id/actions/reserve", func(c echo.Context) error {
 		eventID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 		if err != nil {
@@ -637,6 +661,8 @@ func main() {
 			"sheet_num":  sheet.Num,
 		})
 	}, loginRequired)
+
+	// SOCRE: 10 / 1req
 	e.DELETE("/api/events/:id/sheets/:rank/:num/reservation", func(c echo.Context) error {
 		eventID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 		if err != nil {
@@ -703,6 +729,8 @@ func main() {
 
 		return c.NoContent(204)
 	}, loginRequired)
+
+	// SCORE: 1 / 1req
 	e.GET("/admin/", func(c echo.Context) error {
 		var events []*Event
 		administrator := c.Get("administrator")
@@ -718,6 +746,8 @@ func main() {
 			"origin":        c.Scheme() + "://" + c.Request().Host,
 		})
 	}, fillinAdministrator)
+
+	// SCORE: 1 / 1req
 	e.POST("/admin/api/actions/login", func(c echo.Context) error {
 		var params struct {
 			LoginName string `json:"login_name"`
