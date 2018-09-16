@@ -100,6 +100,9 @@ type SheetN struct {
 
 func random(min, max int64) int64 {
 	rand.Seed(time.Now().Unix())
+	if max - min  == 0 {
+		return 0
+	}
 	return rand.Int63n(max - min) + min
 }
 
