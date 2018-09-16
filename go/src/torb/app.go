@@ -98,25 +98,12 @@ type SheetN struct {
 	num int64
 }
 
-func random(min, max int64) int64 {
-	rand.Seed(time.Now().Unix())
-	if max - min  == 0 {
-		return 0
+func shuffle(data []SheetN) {
+	n := len(data)
+	for i := n - 1; i >= 0; i-- {
+		j := rand.Intn(i + 1)
+		data[i], data[j] = data[j], data[i]
 	}
-	return rand.Int63n(max - min) + min
-}
-
-func removeSheet(sheets []SheetN, index int64) ([]SheetN, SheetN) {
-	var result []SheetN
-	var removed SheetN
-	for i, v := range sheets {
-		if int64(i) != index {
-			result = append(result, v)
-		} else {
-			removed = v
-		}
-	}
-	return result, removed
 }
 
 func sessUserID(c echo.Context) int64 {
@@ -758,7 +745,6 @@ func main() {
 			return resError(c, "sold_out", 409)
 		}
 		defer rows.Close()
-		var reservedSheetNum int64
 		for rows.Next() {
 			var sheetId int64
 			var sheetNum int64
@@ -769,16 +755,15 @@ func main() {
 			sheets = append(sheets, SheetN{id: sheetId, num: sheetNum})
 		}
 
-		for _, _ = range sheets {
-			randomIndex := random(int64(0), int64(len(sheets)  - 1))
-			remainSheets, removed := removeSheet(sheets, randomIndex)
-			sheets = remainSheets
+		shuffle(sheets)
+		var reservedSheetNum int64
+		for _, v := range sheets {
 			tx, err := db.Begin()
 			if err != nil {
 				return err
 			}
 
-			res, err := tx.Exec("INSERT INTO reservations (event_id, sheet_id, user_id, reserved_at) VALUES (?, ?, ?, ?)", event.ID, removed.id, user.ID, time.Now().UTC().Format("2006-01-02 15:04:05.000000"))
+			res, err := tx.Exec("INSERT INTO reservations (event_id, sheet_id, user_id, reserved_at) VALUES (?, ?, ?, ?)", event.ID, v.id, user.ID, time.Now().UTC().Format("2006-01-02 15:04:05.000000"))
 			if err != nil {
 				tx.Rollback()
 				log.Println("re-try: rollback by", err)
@@ -796,7 +781,7 @@ func main() {
 				continue
 			}
 
-			reservedSheetNum = removed.num
+			reservedSheetNum = v.num
 			break
 		}
 		return c.JSON(202, echo.Map{
