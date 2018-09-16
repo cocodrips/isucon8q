@@ -619,15 +619,21 @@ func main() {
 			return resError(c, "invalid_rank", 400)
 		}
 
-		var sheet Sheet
+		//var sheet Sheet
 		var reservationID int64
-		for {
-			// TODO これはやばい... order by rand()はやばい。randomで取る必要ない。
-			if err := db.QueryRow("SELECT * FROM sheets WHERE id NOT IN (SELECT sheet_id FROM reservations WHERE event_id = ? AND canceled_at IS NULL FOR UPDATE) AND `rank` = ? ORDER BY RAND() LIMIT 1", event.ID, params.Rank).Scan(&sheet.ID, &sheet.Rank, &sheet.Num, &sheet.Price); err != nil {
-				if err == sql.ErrNoRows {
-					return resError(c, "sold_out", 409)
-				}
-				return err
+
+		rows, err := db.Query("select sheets.id as id, sheets.num as num from sheets WHERE id NOT IN (select sheet_id from reservations where event_id = ? and canceled_at is null) and `rank` = ?", event.ID, params.Rank)
+		if err == sql.ErrNoRows {
+			return resError(c, "sold_out", 409)
+		}
+		defer rows.Close()
+		var reservedSheetNum int64
+		for rows.Next() {
+			var sheetId int64
+			var sheetNum int64
+			err = rows.Scan(&sheetId, &sheetNum)
+			if err != nil {
+				return resError(c, "sold_out", 409)
 			}
 
 			tx, err := db.Begin()
@@ -635,7 +641,7 @@ func main() {
 				return err
 			}
 
-			res, err := tx.Exec("INSERT INTO reservations (event_id, sheet_id, user_id, reserved_at) VALUES (?, ?, ?, ?)", event.ID, sheet.ID, user.ID, time.Now().UTC().Format("2006-01-02 15:04:05.000000"))
+			res, err := tx.Exec("INSERT INTO reservations (event_id, sheet_id, user_id, reserved_at) VALUES (?, ?, ?, ?)", event.ID, sheetId, user.ID, time.Now().UTC().Format("2006-01-02 15:04:05.000000"))
 			if err != nil {
 				tx.Rollback()
 				log.Println("re-try: rollback by", err)
@@ -653,12 +659,13 @@ func main() {
 				continue
 			}
 
+			reservedSheetNum = sheetNum
 			break
 		}
 		return c.JSON(202, echo.Map{
 			"id":         reservationID,
 			"sheet_rank": params.Rank,
-			"sheet_num":  sheet.Num,
+			"sheet_num":  reservedSheetNum,
 		})
 	}, loginRequired)
 
