@@ -78,6 +78,7 @@ type Reservation struct {
 	ReservedAt   *time.Time `json:"-"`
 	CanceledAt   *time.Time `json:"-"`
 	LastActionAt *time.Time `json:"-"`
+	Canceled     int        `json:"-"`
 
 	Event          *Event `json:"event,omitempty"`
 	SheetRank      string `json:"sheet_rank,omitempty"`
@@ -562,7 +563,7 @@ func main() {
 		for rows.Next() {
 			var reservation Reservation
 			var sheet Sheet
-			if err := rows.Scan(&reservation.ID, &reservation.EventID, &reservation.SheetID, &reservation.UserID, &reservation.ReservedAt, &reservation.CanceledAt, &reservation.LastActionAt, &sheet.Rank, &sheet.Num); err != nil {
+			if err := rows.Scan(&reservation.ID, &reservation.EventID, &reservation.SheetID, &reservation.UserID, &reservation.ReservedAt, &reservation.CanceledAt, &reservation.LastActionAt, &reservation.Canceled, &sheet.Rank, &sheet.Num); err != nil {
 				return err
 			}
 
@@ -762,7 +763,7 @@ func main() {
 			}
 
 			atime := time.Now().UTC().Format("2006-01-02 15:04:05.000000")
-			res, err := tx.Exec("INSERT INTO reservations (event_id, sheet_id, user_id, reserved_at, last_action_at) VALUES (?, ?, ?, ?, ?)", event.ID, v.id, user.ID, atime, atime)
+			res, err := tx.Exec("INSERT INTO reservations (event_id, sheet_id, user_id, reserved_at, last_action_at, canceled) VALUES (?, ?, ?, ?, ?, ?)", event.ID, v.id, user.ID, atime, atime, 0)
 			if err != nil {
 				tx.Rollback()
 				log.Println("re-try: rollback by", err)
@@ -833,7 +834,7 @@ func main() {
 		var reservation Reservation
 		// TODO 行lockしている。 このトランザクションのためにlockしている。
 		// 複合indexは入っている。
-		if err := tx.QueryRow("SELECT * FROM reservations WHERE event_id = ? AND sheet_id = ? AND canceled_at IS NULL GROUP BY event_id HAVING reserved_at = MIN(reserved_at) FOR UPDATE", event.ID, sheet.ID).Scan(&reservation.ID, &reservation.EventID, &reservation.SheetID, &reservation.UserID, &reservation.ReservedAt, &reservation.CanceledAt, &reservation.LastActionAt); err != nil {
+		if err := tx.QueryRow("SELECT * FROM reservations WHERE event_id = ? AND sheet_id = ? AND canceled_at IS NULL GROUP BY event_id HAVING reserved_at = MIN(reserved_at) FOR UPDATE", event.ID, sheet.ID).Scan(&reservation.ID, &reservation.EventID, &reservation.SheetID, &reservation.UserID, &reservation.ReservedAt, &reservation.CanceledAt, &reservation.LastActionAt, &reservation.Canceled); err != nil {
 			tx.Rollback()
 			if err == sql.ErrNoRows {
 				return resError(c, "not_reserved", 400)
@@ -846,7 +847,7 @@ func main() {
 		}
 
 		atime := time.Now().UTC().Format("2006-01-02 15:04:05.000000")
-		if _, err := tx.Exec("UPDATE reservations SET canceled_at = ?, last_action_at = ? WHERE id = ?", atime, atime, reservation.ID); err != nil {
+		if _, err := tx.Exec("UPDATE reservations SET canceled_at = ?, last_action_at = ?, canceled = ? WHERE id = ?", atime, atime, nil, reservation.ID); err != nil {
 			tx.Rollback()
 			return err
 		}
@@ -1034,7 +1035,7 @@ func main() {
 		for rows.Next() {
 			var reservation Reservation
 			var sheet Sheet
-			if err := rows.Scan(&reservation.ID, &reservation.EventID, &reservation.SheetID, &reservation.UserID, &reservation.ReservedAt, &reservation.CanceledAt, &reservation.LastActionAt, &sheet.Rank, &sheet.Num, &sheet.Price, &event.Price); err != nil {
+			if err := rows.Scan(&reservation.ID, &reservation.EventID, &reservation.SheetID, &reservation.UserID, &reservation.ReservedAt, &reservation.CanceledAt, &reservation.LastActionAt, &reservation.Canceled, &sheet.Rank, &sheet.Num, &sheet.Price, &event.Price); err != nil {
 				return err
 			}
 			report := Report{
@@ -1066,7 +1067,7 @@ func main() {
 			var reservation Reservation
 			var sheet Sheet
 			var event Event
-			if err := rows.Scan(&reservation.ID, &reservation.EventID, &reservation.SheetID, &reservation.UserID, &reservation.ReservedAt, &reservation.CanceledAt, &reservation.LastActionAt, &sheet.Rank, &sheet.Num, &sheet.Price, &event.ID, &event.Price); err != nil {
+			if err := rows.Scan(&reservation.ID, &reservation.EventID, &reservation.SheetID, &reservation.UserID, &reservation.ReservedAt, &reservation.CanceledAt, &reservation.LastActionAt, &reservation.Canceled, &sheet.Rank, &sheet.Num, &sheet.Price, &event.ID, &event.Price); err != nil {
 				return err
 			}
 			report := Report{
