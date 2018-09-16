@@ -90,9 +90,9 @@ type SheetN struct {
 	num int64
 }
 
-func random(min, max int) int {
+func random(min, max int64) int64 {
 	rand.Seed(time.Now().Unix())
-	return rand.Intn(max - min) + min
+	return rand.Int63n(max - min) + min
 }
 
 func removeSheet(sheets []SheetN, index int) ([]SheetN, SheetN) {
