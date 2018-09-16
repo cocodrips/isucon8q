@@ -78,7 +78,7 @@ type Reservation struct {
 	ReservedAt   *time.Time `json:"-"`
 	CanceledAt   *time.Time `json:"-"`
 	LastActionAt *time.Time `json:"-"`
-	Canceled     int        `json:"-"`
+	Canceled     *int       `json:"-"`
 
 	Event          *Event `json:"event,omitempty"`
 	SheetRank      string `json:"sheet_rank,omitempty"`
