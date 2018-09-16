@@ -71,12 +71,13 @@ type Sheet struct {
 }
 
 type Reservation struct {
-	ID         int64      `json:"id"`
-	EventID    int64      `json:"-"`
-	SheetID    int64      `json:"-"`
-	UserID     int64      `json:"-"`
-	ReservedAt *time.Time `json:"-"`
-	CanceledAt *time.Time `json:"-"`
+	ID           int64      `json:"id"`
+	EventID      int64      `json:"-"`
+	SheetID      int64      `json:"-"`
+	UserID       int64      `json:"-"`
+	ReservedAt   *time.Time `json:"-"`
+	CanceledAt   *time.Time `json:"-"`
+	LastActionAt *time.Time `json:"-"`
 
 	Event          *Event `json:"event,omitempty"`
 	SheetRank      string `json:"sheet_rank,omitempty"`
@@ -94,7 +95,7 @@ type Administrator struct {
 }
 
 type SheetN struct {
-	id int64
+	id  int64
 	num int64
 }
 
@@ -290,7 +291,6 @@ func sheetNumToId(sheet_rank string, sheet_num int64) int64 {
 	return sheet_id
 }
 
-
 func getEvent(eventID, loginUserID int64) (*Event, error) {
 	var event Event
 
@@ -324,9 +324,9 @@ func getEvent(eventID, loginUserID int64) (*Event, error) {
 		for idx, _ := range sheets.Detail {
 			sheet := Sheet{}
 			sheet.Reserved = false
-			sheet.ID = sheetNumToId(sheet_rank, int64(idx + 1))
+			sheet.ID = sheetNumToId(sheet_rank, int64(idx+1))
 			sheet.Num = int64(idx + 1)
-			sheets.Detail[idx] = &sheet;
+			sheets.Detail[idx] = &sheet
 		}
 	}
 
@@ -342,10 +342,10 @@ func getEvent(eventID, loginUserID int64) (*Event, error) {
 			sheet_rank := getSheetRank(reservation.SheetID)
 			sheet_num := sheetIdToNum(reservation.SheetID)
 			sheets := event.Sheets[sheet_rank]
-			sheets.Remains--;
+			sheets.Remains--
 			// sheet情報入れる
 			//fmt.Println(sheet_rank, reservation.SheetID, sheet_num)
-			sheet := sheets.Detail[sheet_num - 1]
+			sheet := sheets.Detail[sheet_num-1]
 			sheet.Reserved = true
 			sheet.ID = reservation.SheetID
 			sheet.Num = sheetIdToNum(reservation.SheetID)
@@ -563,7 +563,7 @@ func main() {
 		for rows.Next() {
 			var reservation Reservation
 			var sheet Sheet
-			if err := rows.Scan(&reservation.ID, &reservation.EventID, &reservation.SheetID, &reservation.UserID, &reservation.ReservedAt, &reservation.CanceledAt, &sheet.Rank, &sheet.Num); err != nil {
+			if err := rows.Scan(&reservation.ID, &reservation.EventID, &reservation.SheetID, &reservation.UserID, &reservation.ReservedAt, &reservation.CanceledAt, &reservation.LastActionAt, &sheet.Rank, &sheet.Num); err != nil {
 				return err
 			}
 
@@ -763,7 +763,8 @@ func main() {
 				return err
 			}
 
-			res, err := tx.Exec("INSERT INTO reservations (event_id, sheet_id, user_id, reserved_at) VALUES (?, ?, ?, ?)", event.ID, v.id, user.ID, time.Now().UTC().Format("2006-01-02 15:04:05.000000"))
+			atime := time.Now().UTC().Format("2006-01-02 15:04:05.000000")
+			res, err := tx.Exec("INSERT INTO reservations (event_id, sheet_id, user_id, reserved_at, last_action_at) VALUES (?, ?, ?, ?)", event.ID, v.id, user.ID, atime, atime)
 			if err != nil {
 				tx.Rollback()
 				log.Println("re-try: rollback by", err)
@@ -834,7 +835,7 @@ func main() {
 		var reservation Reservation
 		// TODO 行lockしている。 このトランザクションのためにlockしている。
 		// 複合indexは入っている。
-		if err := tx.QueryRow("SELECT * FROM reservations WHERE event_id = ? AND sheet_id = ? AND canceled_at IS NULL GROUP BY event_id HAVING reserved_at = MIN(reserved_at) FOR UPDATE", event.ID, sheet.ID).Scan(&reservation.ID, &reservation.EventID, &reservation.SheetID, &reservation.UserID, &reservation.ReservedAt, &reservation.CanceledAt); err != nil {
+		if err := tx.QueryRow("SELECT * FROM reservations WHERE event_id = ? AND sheet_id = ? AND canceled_at IS NULL GROUP BY event_id HAVING reserved_at = MIN(reserved_at) FOR UPDATE", event.ID, sheet.ID).Scan(&reservation.ID, &reservation.EventID, &reservation.SheetID, &reservation.UserID, &reservation.ReservedAt, &reservation.CanceledAt, &reservation.LastActionAt); err != nil {
 			tx.Rollback()
 			if err == sql.ErrNoRows {
 				return resError(c, "not_reserved", 400)
@@ -846,7 +847,8 @@ func main() {
 			return resError(c, "not_permitted", 403)
 		}
 
-		if _, err := tx.Exec("UPDATE reservations SET canceled_at = ? WHERE id = ?", time.Now().UTC().Format("2006-01-02 15:04:05.000000"), reservation.ID); err != nil {
+		atime := time.Now().UTC().Format("2006-01-02 15:04:05.000000")
+		if _, err := tx.Exec("UPDATE reservations SET canceled_at = ?, last_action_at = ? WHERE id = ?", atime, atime, reservation.ID); err != nil {
 			tx.Rollback()
 			return err
 		}
@@ -1034,7 +1036,7 @@ func main() {
 		for rows.Next() {
 			var reservation Reservation
 			var sheet Sheet
-			if err := rows.Scan(&reservation.ID, &reservation.EventID, &reservation.SheetID, &reservation.UserID, &reservation.ReservedAt, &reservation.CanceledAt, &sheet.Rank, &sheet.Num, &sheet.Price, &event.Price); err != nil {
+			if err := rows.Scan(&reservation.ID, &reservation.EventID, &reservation.SheetID, &reservation.UserID, &reservation.ReservedAt, &reservation.CanceledAt, &reservation.LastActionAt, &sheet.Rank, &sheet.Num, &sheet.Price, &event.Price); err != nil {
 				return err
 			}
 			report := Report{
@@ -1066,7 +1068,7 @@ func main() {
 			var reservation Reservation
 			var sheet Sheet
 			var event Event
-			if err := rows.Scan(&reservation.ID, &reservation.EventID, &reservation.SheetID, &reservation.UserID, &reservation.ReservedAt, &reservation.CanceledAt, &sheet.Rank, &sheet.Num, &sheet.Price, &event.ID, &event.Price); err != nil {
+			if err := rows.Scan(&reservation.ID, &reservation.EventID, &reservation.SheetID, &reservation.UserID, &reservation.ReservedAt, &reservation.CanceledAt, &reservation.LastActionAt, &sheet.Rank, &sheet.Num, &sheet.Price, &event.ID, &event.Price); err != nil {
 				return err
 			}
 			report := Report{
